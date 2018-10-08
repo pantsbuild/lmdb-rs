@@ -32,6 +32,7 @@ use error::{
 };
 use flags::{
     DatabaseFlags,
+    EnvironmentCopyFlags,
     EnvironmentFlags,
 };
 use transaction::{
@@ -164,6 +165,18 @@ impl Environment {
                     0
                 },
             ))
+        }
+    }
+
+    ///
+    /// Make a consistent copy of the environment in the given destination directory.
+    ///
+    /// Destination must exist, and be an empty directory.
+    ///
+    pub fn copy(&self, destination: &Path, flags: EnvironmentCopyFlags) -> Result<()> {
+        let c_destination = CString::new(destination.as_os_str().as_bytes()).unwrap();
+        unsafe {
+            lmdb_result(ffi::mdb_env_copy2(self.env(), c_destination.as_ptr(), flags.bits()))
         }
     }
 
@@ -676,5 +689,24 @@ mod test {
         env.set_map_size(2 * default_size).unwrap();
         info = env.info().unwrap();
         assert_eq!(info.map_size(), 2 * default_size);
+    }
+
+    fn test_copy() {
+        let dir = TempDir::new("test").unwrap();
+        let dir2 = TempDir::new("test-copy").unwrap();
+        {
+            let env = Environment::new().open(dir.path()).unwrap();
+            {
+                let db = env.open_db(None).unwrap();
+                let mut txn = env.begin_rw_txn().unwrap();
+                txn.put(db, b"key1", b"val1", WriteFlags::empty()).unwrap();
+                txn.commit().unwrap();
+            }
+            env.copy(dir2.path(), EnvironmentCopyFlags::empty()).unwrap()
+        }
+        let env = Environment::new().open(dir2.path()).unwrap();
+        let db = env.open_db(None).unwrap();
+        let txn = env.begin_ro_txn().unwrap();
+        assert_eq!(txn.get(db, b"key1").unwrap(), b"val1");
     }
 }
